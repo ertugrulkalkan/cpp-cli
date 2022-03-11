@@ -3,46 +3,67 @@
 
 #include <cstdlib>
 
+#define INPUT_BUFFER_SIZE 1024
+
+typedef struct
+{
+    char* (*generate_line)();
+} perm_line_t;
 
 class CLI
 {
 private:
+    static CLI *cli;
+
+    enum mode_t
+    {
+        CLI_MODE_COM = 0x0,
+        CLI_MODE_INSERT,
+    } mode;
+
     size_t width;
     size_t height;
+
+    perm_line_t *perm_lines;
+    size_t perm_line_cnt = 0;
 
     size_t log_top = 0;
     size_t log_bottom = 0;
     size_t log_index = 0;
-    
+
     char **map;
     char *input_buffer;
-    char *header_buffer;
-    char *variable_buffer_l1;
-    char *variable_buffer_l2;
-    char *variable_buffer_l1_fmt;
-    char *variable_buffer_l2_fmt;
+
 
 private:
-    CLI() = delete;
+    CLI();
+    ~CLI();
     CLI(const CLI&) = delete;
     CLI(const CLI&&) = delete;
     CLI& operator=(const CLI&) = delete;
 
     void push_log(const char *msg, size_t len);
+    void key_pressed(const int button);
+    void resize_cli();
+    void close_cli();
 
 public:
-    CLI(size_t width, size_t height);
-    ~CLI();
+
+    // set callbacks if needed
+    void (*on_close)();
+    void (*on_open)();
+
+    static CLI* get_cli();
 
     void initMap();
-
-    void log(const char *msg);
-    void key_pressed(const int button);
     void update();
+    void block_signals();
 
+    void add_perm_line(perm_line_t *perm_line);
+    void log(const char *msg);
+
+    void kb();
 };
 
-void set_cli_size(size_t width, size_t height);
-CLI* get_cli();
 
 #endif

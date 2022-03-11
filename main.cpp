@@ -1,40 +1,48 @@
 #include "CLI.h"
 
-#include <sys/ioctl.h>
-#include <termio.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <chrono>
 #include <thread>
 
-int _kbhit()
+
+char* my_generate_line_1()
 {
-    static const int STDIN = 0;
-    static int initialized = 0;
+    char *buffer = new char[256];
+    sprintf(buffer, "VAR1 : %d", rand());
+    return buffer;
+}
 
-    if (!initialized)
-    {
-        struct termios term;
-        tcgetattr(STDIN, &term);
-        term.c_lflag &= ~ICANON;
-        term.c_lflag &= ~ECHO;
-        tcsetattr(STDIN, TCSANOW, &term);
-        setbuf(stdin, NULL);
-        initialized = 1;
-    }
+char* my_generate_line_2()
+{
+    char *buffer = new char[256];
+    sprintf(buffer, "VAR2 : %d", rand());
+    return buffer;
+}
 
-    int bytes_waiting = 0;
-    ioctl(STDIN, FIONREAD, &bytes_waiting);
-    return bytes_waiting;
+void my_close()
+{
+    printf("CLI closed\n");
+}
+
+void my_open()
+{
+    printf("CLI opened\n");
 }
 
 int main()
 {
-    struct winsize w;
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+    CLI *cli = CLI::get_cli();
 
-    set_cli_size(w.ws_col, w.ws_row);
-    CLI *cli = get_cli();
+    perm_line_t perm_line = {&my_generate_line_1};
+    cli->add_perm_line(&perm_line);
+    perm_line = {&my_generate_line_2};
+    cli->add_perm_line(&perm_line);
+
+    cli->block_signals();
+
+    cli->on_open = &my_open;
+    cli->on_close = &my_close;
     cli->initMap();
 
     int count = 0;
@@ -42,12 +50,9 @@ int main()
     char msg[100];
     while(true)
     {
-        if(_kbhit())
-        {
-            char c = getchar();
-            cli->key_pressed(c);
-        }
-        if(count % 1000 == 0)
+        cli->kb();
+
+        if(count % 100 == 0)
         {
             sprintf(msg, "Hello %d", real_cnt++);
             cli->log(msg);

@@ -1,42 +1,68 @@
 #include "CLI.h"
 
 #include <cstring>
+#include <cstdio>
 #include <algorithm>
-#include <iostream>
 #include <sys/ioctl.h>
+#include <termio.h>
 #include <unistd.h>
+#include <csignal>
 
-static CLI *cli = nullptr;
-static size_t cli_width = 0;
-static size_t cli_height = 0;
-
-void set_cli_size(size_t width, size_t height)
+#pragma region UTILS
+void signal_handler(int signum)
 {
-    cli_width = width;
-    cli_height = height;
+    char *msg = new char[100];
+    sprintf(msg, "PRESS <ESC> TO EXIT");
+    CLI::get_cli()->log(msg);
+    delete[] msg;
 }
 
-CLI* get_cli()
+int keyboard_hit()
 {
-    if(cli == nullptr)
+    static const int STDIN = 0;
+    static int initialized = 0;
+
+    if (!initialized)
     {
-        cli = new CLI(cli_width, cli_height);
+        struct termios term;
+        tcgetattr(STDIN, &term);
+        term.c_lflag &= ~ICANON;
+        term.c_lflag &= ~ECHO;
+        tcsetattr(STDIN, TCSANOW, &term);
+        setbuf(stdin, NULL);
+        initialized = 1;
     }
-    return cli;
+
+    int bytes_waiting = 0;
+    ioctl(STDIN, FIONREAD, &bytes_waiting);
+    return bytes_waiting;
 }
+#pragma endregion
 
-CLI::CLI(size_t width, size_t height)
+CLI *CLI::cli = nullptr;
+
+CLI::CLI()
 {
-    this->width = width;
-    this->height = height;
+    this->width = 0;
+    this->height = 0;
 
-    // last line is reserved
-    this->log_bottom = height - 1;
-    this->log_top = 3;
+    this->perm_lines = nullptr;
+    this->perm_line_cnt = 0;
+
+    this->input_buffer = new char[INPUT_BUFFER_SIZE];
+    memset(this->input_buffer, 0, INPUT_BUFFER_SIZE);
+
+    this->on_close = nullptr;
+    this->map = nullptr;
+
+    this->mode = mode_t::CLI_MODE_COM;
 }
 
 CLI::~CLI()
 {
+    delete[] this->perm_lines;
+    delete[] this->input_buffer;
+
     for (size_t i = 0; i < this->height; i++)
     {
         delete[] this->map[i];
@@ -44,38 +70,10 @@ CLI::~CLI()
     delete[] this->map;
 }
 
-void CLI::initMap()
-{
-    map = new char*[height];
-    for (size_t i = 0; i < height; i++)
-    {
-        map[i] = new char[width];
-    }
-
-    input_buffer = new char[1024];
-    header_buffer = new char[1024];
-    variable_buffer_l1 = new char[1024];
-    variable_buffer_l2 = new char[1024];
-    variable_buffer_l1_fmt = new char[1024];
-    variable_buffer_l2_fmt = new char[1024];
-
-    memset(input_buffer, 0, 1024);
-
-    memcpy(header_buffer, "CLI", 3);
-    strcpy(variable_buffer_l1_fmt, "constant field 1: var1: 0x%x, var2: %d, var3: %d, var4: 0x%x");
-    strcpy(variable_buffer_l2_fmt, "constant field 2: var5: 0x%x, var6: %d, var7: %d, var8: 0x%x");
-}
-
-void CLI::log(const char *msg)
-{
-    push_log(msg, strlen(msg));
-    update();
-}
-
 void CLI::push_log(const char *msg, size_t len)
 {
     size_t displayable_len = std::min(width, len);
-    
+
     if(log_index = log_bottom)
     {
         for(size_t i = log_top; i < log_bottom - 1; i++)
@@ -90,53 +88,184 @@ void CLI::push_log(const char *msg, size_t len)
     log_index++;
 }
 
-void CLI::update()
-{
-    strcpy(map[0], header_buffer);
-
-    sprintf(variable_buffer_l1, variable_buffer_l1_fmt, 0, 0, 0, 0);
-    sprintf(variable_buffer_l2, variable_buffer_l2_fmt, 0, 0, 0, 0);
-
-    strcpy(map[1], variable_buffer_l1);
-    strcpy(map[2], variable_buffer_l2);
-
-    memcpy(map[height - 1], input_buffer, width);
-    std::cout << std::endl;
-    for(size_t i = 0; i < height; i++)
-    {
-        std::cout << map[i];
-        if(i != height - 1)
-        {
-            std::cout << std::endl;
-        }
-        
-    }
-    std::flush(std::cout);
-}
-
 void CLI::key_pressed(const int button)
 {
-    switch (button)
+    if(this->mode == mode_t::CLI_MODE_COM)
     {
-    case 127:
-        if(input_buffer[0] != '\0')
+        switch (button)
         {
-            input_buffer[strlen(input_buffer) - 1] = '\0';
-        }
-        break;
-    
-    case '\n':
-        log(input_buffer);
-        memset(input_buffer, 0, 512);
-        break;
+        case 'i':
+            this->mode = mode_t::CLI_MODE_INSERT;
+            break;
 
-    default:
-        if(strlen(input_buffer) < width - 1)
-        {
-            input_buffer[strlen(input_buffer)] = button;
-            input_buffer[strlen(input_buffer) + 1] = '\0';
+        case '\e':
+            close_cli();
+            break;
+
+        default:
+            break;
         }
-        break;
     }
+    else if (this->mode == mode_t::CLI_MODE_INSERT)
+    {
+        switch (button)
+        {
+        case '\x7f':
+            if(input_buffer[0] != '\0')
+            {
+                input_buffer[strlen(input_buffer) - 1] = '\0';
+            }
+            break;
+
+        case '\n':
+            log(input_buffer);
+            memset(input_buffer, 0, INPUT_BUFFER_SIZE);
+            break;
+
+        case '\e':
+            memset(input_buffer, 0, INPUT_BUFFER_SIZE);
+            this->mode = mode_t::CLI_MODE_COM;
+            break;
+
+        default:
+            if((button >= ' ') && (button <= '~') && strlen(input_buffer) < INPUT_BUFFER_SIZE - 1)
+            {
+                input_buffer[strlen(input_buffer)] = button;
+                input_buffer[strlen(input_buffer) + 1] = '\0';
+            }
+            break;
+        }
+    }
+
     update();
+}
+
+void CLI::resize_cli()
+{
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+
+    if(this->width != w.ws_col || this->height != w.ws_row)
+    {
+        char **old_map = this->map;
+        size_t old_map_width = this->width;
+        size_t old_map_height = this->height;
+
+        this->width = w.ws_col;
+        this->height = w.ws_row;
+
+        this->log_top = perm_line_cnt;
+        this->log_bottom = height - 1;
+
+
+
+        this->map = new char*[this->height];
+        for (size_t i = 0; i < this->height; i++)
+        {
+            this->map[i] = new char[this->width];
+            memset(this->map[i], 0, this->width);
+        }
+
+        if(old_map != nullptr)
+        {
+            {
+                if(old_map_height > this->height)
+                {
+                    // new map is smaller
+                    for(size_t i = this->log_top; i < this->height - 1; ++i)
+                    {
+                        memcpy(this->map[i], old_map[i + (old_map_height - this->height)], std::min(old_map_width, this->width));
+                    }
+                }
+                else
+                {
+                    // new map is bigger
+                    for(size_t i = this->log_top; i < old_map_height - 1; i++)
+                    {
+                        memcpy(this->map[(this->height - old_map_height) + i], old_map[i], std::min(old_map_width, this->width));
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < old_map_height; i++)
+            {
+                delete[] old_map[i];
+            }
+            delete[] old_map;
+        }
+    }
+}
+
+void CLI::close_cli()
+{
+    printf("\e[?1049l");
+    if(on_close != nullptr) on_close();
+    exit(0);
+}
+
+CLI* CLI::get_cli()
+{
+    if(cli == nullptr)
+    {
+        cli = new CLI();
+    }
+    return cli;
+}
+
+void CLI::initMap()
+{
+    if(on_open != nullptr) on_open();
+    printf("\e[?1049h\e[H");
+    resize_cli();
+}
+
+void CLI::update()
+{
+    resize_cli();
+    printf("\e[2J\n");
+
+    for(size_t i = 0; i < perm_line_cnt; i++)
+    {
+        char *line = perm_lines[i].generate_line();
+        memcpy(map[i], line, std::min(width, strlen(line)));
+    }
+
+    memcpy(map[height - 1], input_buffer, std::min(this->width, (size_t)INPUT_BUFFER_SIZE));
+
+    for(size_t i = 0; i < height; i++)
+    {
+        printf("%s", map[i]);
+        if(i != height - 1)
+        {
+            printf("\n");
+        }
+    }
+    fflush(stdout);
+}
+
+void CLI::block_signals()
+{
+    signal(SIGINT, &signal_handler);
+}
+
+void CLI::add_perm_line(perm_line_t *line)
+{
+    perm_lines = (perm_line_t*)realloc(perm_lines, sizeof(perm_line_t) * (perm_line_cnt + 1));
+    perm_lines[perm_line_cnt] = *line;
+    perm_line_cnt++;
+}
+
+void CLI::log(const char *msg)
+{
+    push_log(msg, strlen(msg));
+    update();
+}
+
+void CLI::kb()
+{
+    if(keyboard_hit())
+    {
+        int ch = getchar();
+        key_pressed(ch);
+    }
 }
