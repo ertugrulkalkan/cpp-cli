@@ -8,6 +8,10 @@
 #include <unistd.h>
 #include <csignal>
 
+#define KEY_BCKSPC 0x007f
+#define KEY_ENTER  0x000a
+#define KEY_ESCAPE 0x001b
+
 #pragma region UTILS
 void signal_handler(int signum)
 {
@@ -98,7 +102,7 @@ void CLI::key_pressed(const int button)
             this->mode = mode_t::CLI_MODE_INSERT;
             break;
 
-        case '\e':
+        case KEY_ESCAPE:
             close_cli();
             break;
 
@@ -110,19 +114,19 @@ void CLI::key_pressed(const int button)
     {
         switch (button)
         {
-        case '\x7f':
+        case KEY_BCKSPC:
             if(input_buffer[0] != '\0')
             {
                 input_buffer[strlen(input_buffer) - 1] = '\0';
             }
             break;
 
-        case '\n':
+        case KEY_ENTER:
             log(input_buffer);
             memset(input_buffer, 0, INPUT_BUFFER_SIZE);
             break;
 
-        case '\e':
+        case KEY_ESCAPE:
             memset(input_buffer, 0, INPUT_BUFFER_SIZE);
             this->mode = mode_t::CLI_MODE_COM;
             break;
@@ -265,7 +269,22 @@ void CLI::kb()
 {
     if(keyboard_hit())
     {
-        int ch = getchar();
-        key_pressed(ch);
+#define KB_SIZE 4
+        char *key = new char[KB_SIZE];
+        memset(key, 0, KB_SIZE);
+
+        size_t size = read(STDIN_FILENO, key, (size_t)KB_SIZE);
+        
+        switch (size)
+        {
+        case 1:
+            key_pressed(key[0]);
+            break;
+        case 2:
+        case 3:
+        case 4:
+        default:
+            break;
+        }
     }
 }
