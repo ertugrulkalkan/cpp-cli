@@ -2,18 +2,23 @@
 #define CLI_H
 
 #include <cstdlib>
+#include <functional>
 
 #define INPUT_BUFFER_SIZE 1024
+#define LOG_FILE_NAME_SIZE 128
 
 typedef struct
 {
-    char* (*generate_line)();
+    std::function<char*()> generate_line;
 } perm_line_t;
 
 class CLI
 {
 private:
     static CLI *cli;
+
+    static bool file_logging;
+    static int file_logging_fd;
 
     enum mode_t
     {
@@ -37,7 +42,6 @@ private:
 
 private:
     CLI();
-    ~CLI();
     CLI(const CLI&) = delete;
     CLI(const CLI&&) = delete;
     CLI& operator=(const CLI&) = delete;
@@ -48,8 +52,10 @@ private:
     void close_cli();
 
 public:
+    ~CLI();
 
     // set callbacks if needed
+    void (*on_key_pressed)(const int button);
     void (*on_close)();
     void (*on_open)();
 
@@ -58,12 +64,15 @@ public:
     void initMap();
     void update();
     void block_signals();
+    void unblock_signals();
 
     void add_perm_line(perm_line_t *perm_line);
-    void log(const char *msg);
+    void log(const char *fmt, ...);
+
+    void enable_file_logging();
 
     void kb();
 };
 
 
-#endif
+#endif // CLI_H

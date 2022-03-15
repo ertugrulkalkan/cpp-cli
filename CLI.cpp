@@ -1,5 +1,6 @@
 #include "CLI.h"
 
+#include <cstdarg>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -7,43 +8,50 @@
 #include <termio.h>
 #include <unistd.h>
 #include <csignal>
+#include <fcntl.h>
 
 #define KEY_BCKSPC 0x007f
 #define KEY_ENTER  0x000a
 #define KEY_ESCAPE 0x001b
 
 #pragma region UTILS
+static termios old;
+static int initialized = 0;
+
 void signal_handler(int signum)
 {
-    char *msg = new char[100];
-    sprintf(msg, "PRESS <ESC> TO EXIT");
-    CLI::get_cli()->log(msg);
-    delete[] msg;
+    CLI::get_cli()->log("PRESS <ESC> TO EXIT");
 }
 
 int keyboard_hit()
 {
-    static const int STDIN = 0;
-    static int initialized = 0;
-
     if (!initialized)
     {
+        tcgetattr(STDIN_FILENO, &old);
         struct termios term;
-        tcgetattr(STDIN, &term);
+        tcgetattr(STDIN_FILENO, &term);
         term.c_lflag &= ~ICANON;
         term.c_lflag &= ~ECHO;
-        tcsetattr(STDIN, TCSANOW, &term);
+        tcsetattr(STDIN_FILENO, TCSANOW, &term);
         setbuf(stdin, NULL);
         initialized = 1;
     }
 
     int bytes_waiting = 0;
-    ioctl(STDIN, FIONREAD, &bytes_waiting);
+    ioctl(STDIN_FILENO, FIONREAD, &bytes_waiting);
     return bytes_waiting;
+}
+
+void restore_terminal_settings()
+{
+    old.c_cflag |= (ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &old);
 }
 #pragma endregion
 
 CLI *CLI::cli = nullptr;
+bool CLI::file_logging;
+int CLI::file_logging_fd;
 
 CLI::CLI()
 {
@@ -60,12 +68,21 @@ CLI::CLI()
     this->map = nullptr;
 
     this->mode = mode_t::CLI_MODE_COM;
+
+    this->file_logging = false;
 }
 
 CLI::~CLI()
 {
-    delete[] this->perm_lines;
-    delete[] this->input_buffer;
+    if(this->perm_lines)
+    {
+        delete[] this->perm_lines;
+    }
+
+    if(this->input_buffer)
+    {
+        delete[] this->input_buffer;
+    }
 
     for (size_t i = 0; i < this->height; i++)
     {
@@ -76,6 +93,22 @@ CLI::~CLI()
 
 void CLI::push_log(const char *msg, size_t len)
 {
+
+    if(file_logging)
+    {
+        // timestamp
+        time_t t = time(NULL);
+        struct tm tm = *localtime(&t);
+        char time_str[32];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &tm);
+
+        char *log_msg = new char[len + strlen(time_str) + 3];
+        sprintf(log_msg, "%s: %s\n", time_str, msg);
+
+        write(file_logging_fd, log_msg, strlen(log_msg));
+        
+    }
+
     size_t displayable_len = std::min(width, len);
 
     if(log_index = log_bottom)
@@ -104,9 +137,19 @@ void CLI::key_pressed(const int button)
 
         case KEY_ESCAPE:
             close_cli();
+            restore_terminal_settings();
+            if(on_close)
+            {
+                on_close();
+            }
+
             break;
 
         default:
+            if(on_key_pressed)
+            {
+                on_key_pressed(button);
+            }
             break;
         }
     }
@@ -203,8 +246,10 @@ void CLI::resize_cli()
 void CLI::close_cli()
 {
     printf("\e[?1049l");
-    if(on_close != nullptr) on_close();
-    exit(0);
+    if(this->file_logging)
+    {
+        close(file_logging_fd);
+    }
 }
 
 CLI* CLI::get_cli()
@@ -252,6 +297,11 @@ void CLI::block_signals()
     signal(SIGINT, &signal_handler);
 }
 
+void CLI::unblock_signals()
+{
+    signal(SIGINT, SIG_DFL);
+}
+
 void CLI::add_perm_line(perm_line_t *line)
 {
     perm_lines = (perm_line_t*)realloc(perm_lines, sizeof(perm_line_t) * (perm_line_cnt + 1));
@@ -259,10 +309,29 @@ void CLI::add_perm_line(perm_line_t *line)
     perm_line_cnt++;
 }
 
-void CLI::log(const char *msg)
+void CLI::log(const char *fmt, ...)
 {
+    char msg[INPUT_BUFFER_SIZE];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(msg, INPUT_BUFFER_SIZE, fmt, args);
+    va_end(args);
+
     push_log(msg, strlen(msg));
     update();
+}
+
+void CLI::enable_file_logging()
+{
+    if(!this->file_logging)
+    {
+        char *log_file_name = new char[LOG_FILE_NAME_SIZE];
+        time_t t = time(NULL);
+        struct tm *tm = localtime(&t);
+        strftime(log_file_name, LOG_FILE_NAME_SIZE, "/tmp/CLI-%Y-%m-%d_%H-%M-%S.log", tm);
+        this->file_logging_fd = open(log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        this->file_logging = true;
+    }
 }
 
 void CLI::kb()
