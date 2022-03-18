@@ -166,6 +166,10 @@ void CLI::key_pressed(const int button)
 
         case KEY_ENTER:
             log(input_buffer);
+            if(on_input_sent)
+            {
+                on_input_sent(input_buffer);
+            }
             memset(input_buffer, 0, INPUT_BUFFER_SIZE);
             break;
 
@@ -277,6 +281,7 @@ void CLI::update()
     {
         char *line = perm_lines[i].generate_line();
         memcpy(map[i], line, std::min(width, strlen(line)));
+        delete line;
     }
 
     memcpy(map[height - 1], input_buffer, std::min(this->width, (size_t)INPUT_BUFFER_SIZE));

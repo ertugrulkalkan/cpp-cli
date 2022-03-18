@@ -56,6 +56,7 @@ public:
 
     // set callbacks if needed
     void (*on_key_pressed)(const int button);
+    void (*on_input_sent)(const char* input);
     void (*on_close)();
     void (*on_open)();
 
