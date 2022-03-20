@@ -23,6 +23,7 @@ char* my_generate_line_2()
 void my_close()
 {
     printf("CLI closed\n");
+    exit(0);
 }
 
 void my_open()
