@@ -29,7 +29,7 @@ private:
     size_t width;
     size_t height;
 
-    perm_line_t *perm_lines;
+    perm_line_t **perm_lines;
     size_t perm_line_cnt = 0;
 
     size_t log_top = 0;

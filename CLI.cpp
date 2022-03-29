@@ -76,6 +76,8 @@ CLI::~CLI()
 {
     if(this->perm_lines)
     {
+        for(int i = 0; i < this->perm_line_cnt; ++i)
+            delete this->perm_lines[i];
         delete[] this->perm_lines;
     }
 
@@ -245,6 +247,13 @@ void CLI::resize_cli()
             delete[] old_map;
         }
     }
+    else
+    {
+        for(int i = 0; i < this->perm_line_cnt; ++i)
+        {
+            memset(map[i], 0, this->width);
+        }
+    }
 }
 
 void CLI::close_cli()
@@ -279,7 +288,7 @@ void CLI::update()
 
     for(size_t i = 0; i < perm_line_cnt; i++)
     {
-        char *line = perm_lines[i].generate_line();
+        char *line = perm_lines[i]->generate_line();
         memcpy(map[i], line, std::min(width, strlen(line)));
         delete line;
     }
@@ -309,8 +318,8 @@ void CLI::unblock_signals()
 
 void CLI::add_perm_line(perm_line_t *line)
 {
-    perm_lines = (perm_line_t*)realloc(perm_lines, sizeof(perm_line_t) * (perm_line_cnt + 1));
-    perm_lines[perm_line_cnt] = *line;
+    perm_lines = (perm_line_t**)realloc(perm_lines, sizeof(perm_line_t*) * (perm_line_cnt + 1));
+    perm_lines[perm_line_cnt] = line;
     perm_line_cnt++;
 }
 
